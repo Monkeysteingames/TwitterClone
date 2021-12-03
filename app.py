@@ -5,7 +5,7 @@ from flask_debugtoolbar import DebugToolbarExtension
 from sqlalchemy.exc import IntegrityError
 
 from forms import UserAddForm, LoginForm, MessageForm, EditUserForm
-from models import db, connect_db, User, Message
+from models import db, connect_db, User, Message, Likes
 
 CURR_USER_KEY = "curr_user"
 
@@ -308,8 +308,41 @@ def messages_destroy(message_id):
     return redirect(f"/users/{g.user.id}")
 
 
+@app.route('/users/add_like/<int:message_id>', methods=["POST"])
+def add_like(message_id):
+    """Add like to message."""
+
+    if not g.user:
+        flash("Access unauthorized.", "danger")
+        return redirect("/")
+
+    msg = Message.query.get_or_404(message_id).id
+    user_id = g.user.id
+
+    # TODO: add error handling for if the msg is already liked and somehow they're here
+    like = Likes(user_id=user_id, message_id=msg)
+    db.session.add(like)
+    db.session.commit()
+
+    flash('Post liked!', 'success')
+    return redirect("/")
+
 ##############################################################################
 # Homepage and error pages
+
+
+def get_ids_to_display(user):
+    """
+    1. Get current user's following users ids and their own.
+
+    2. Generate a list to filter our messages to only display messages 
+    from users the user is following.
+    """
+    fol_obj_list = [f.__dict__ for f in user.following]
+    ids_to_display = [i['id'] for i in fol_obj_list]
+    # add our current users id
+    ids_to_display.append(user.id)
+    return ids_to_display
 
 
 @app.route('/')
@@ -321,8 +354,10 @@ def homepage():
     """
 
     if g.user:
+        ids_to_display = get_ids_to_display(g.user)
         messages = (Message
                     .query
+                    .filter(Message.user_id.in_(ids_to_display))
                     .order_by(Message.timestamp.desc())
                     .limit(100)
                     .all())
