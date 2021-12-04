@@ -18,7 +18,7 @@ app.config['SQLALCHEMY_DATABASE_URI'] = (
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ECHO'] = False
-app.config['DEBUG_TB_INTERCEPT_REDIRECTS'] = True
+app.config['DEBUG_TB_INTERCEPT_REDIRECTS'] = False
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', "it's a secret")
 toolbar = DebugToolbarExtension(app)
 
@@ -262,6 +262,17 @@ def delete_user():
 ##############################################################################
 # Messages routes:
 
+
+def get_liked_messages(user_id):
+    """
+    Get liked messages that match our logged in user.
+    """
+    liked_messages = Likes.query.filter(Likes.user_id == user_id).all()
+    liked_obj_list = [l.__dict__ for l in liked_messages]
+    liked_msgs_ids = [i['message_id'] for i in liked_obj_list]
+    return liked_msgs_ids
+
+
 @app.route('/messages/new', methods=["GET", "POST"])
 def messages_add():
     """Add a message:
@@ -291,6 +302,15 @@ def messages_show(message_id):
 
     msg = Message.query.get(message_id)
     return render_template('messages/show.html', message=msg)
+
+
+@app.route('/messages/liked/<int:user_id>', methods=["GET"])
+def messages_show_user_liked(user_id):
+    """Show all liked messages by selected user"""
+    liked_message_ids = get_liked_messages(user_id)
+    messages = Message.query.filter(Message.id.in_(liked_message_ids)).all()
+
+    return render_template('messages/show-liked.html', messages=messages, user=user_id)
 
 
 @app.route('/messages/<int:message_id>/delete', methods=["POST"])
@@ -327,17 +347,35 @@ def add_like(message_id):
     flash('Post liked!', 'success')
     return redirect("/")
 
+
+@app.route('/users/remove_like/<int:message_id>', methods=["POST"])
+def remove_like(message_id):
+    """Remove like from message."""
+
+    if not g.user:
+        flash("Access unauthorized.", "danger")
+        return redirect("/")
+
+    # TODO: add error handling for if the msg is already unliked and somehow they're here
+    like = Likes.query.filter(Likes.message_id == message_id).first()
+    db.session.delete(like)
+    db.session.commit()
+
+    flash('Post unliked!', 'info')
+    return redirect("/")
+
 ##############################################################################
 # Homepage and error pages
 
 
-def get_ids_to_display(user):
+def get_ids_to_display(user_id):
     """
     1. Get current user's following users ids and their own.
 
     2. Generate a list to filter our messages to only display messages 
     from users the user is following.
     """
+    user = User.query.get_or_404(user_id)
     fol_obj_list = [f.__dict__ for f in user.following]
     ids_to_display = [i['id'] for i in fol_obj_list]
     # add our current users id
@@ -354,15 +392,15 @@ def homepage():
     """
 
     if g.user:
-        ids_to_display = get_ids_to_display(g.user)
+        ids_to_display = get_ids_to_display(g.user.id)
         messages = (Message
                     .query
                     .filter(Message.user_id.in_(ids_to_display))
                     .order_by(Message.timestamp.desc())
                     .limit(100)
                     .all())
-
-        return render_template('home.html', messages=messages)
+        liked_messages = get_liked_messages(g.user.id)
+        return render_template('home.html', messages=messages, liked_messages=liked_messages)
 
     else:
         return render_template('home-anon.html')
