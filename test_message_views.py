@@ -5,6 +5,7 @@
 #    FLASK_ENV=production python -m unittest test_message_views.py
 
 
+from app import app, CURR_USER_KEY
 import os
 from unittest import TestCase
 
@@ -20,7 +21,6 @@ os.environ['DATABASE_URL'] = "postgresql:///warbler-test"
 
 # Now we can import app
 
-from app import app, CURR_USER_KEY
 
 # Create our tables (we do this here, so we only create the tables
 # once for all tests --- in each test, we'll delete the data
@@ -66,8 +66,54 @@ class MessageViewTestCase(TestCase):
 
             resp = c.post("/messages/new", data={"text": "Hello"})
 
+            import pdb
+            pdb.set_trace()
+
             # Make sure it redirects
             self.assertEqual(resp.status_code, 302)
 
             msg = Message.query.one()
             self.assertEqual(msg.text, "Hello")
+
+    def test_delete_message(self):
+        """Can you delete a message logged in?"""
+
+        with self.client as c:
+            with c.session_transaction() as sess:
+                sess[CURR_USER_KEY] = self.testuser.id
+
+        c.post("/messages/new", data={"text": "Hello"})
+
+        msg = Message.query.one()
+
+        resp = c.post(f"messages/{msg.id}/delete", follow_redirects=True)
+        html = resp.get_data(as_text=True)
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(Message.query.all(), [])
+        self.assertIn("Message Deleted.", html)
+
+    def test_delete_message_logged_out(self):
+        """Make sure we can't delete messages logged out."""
+
+        msg = Message(text="Test", user_id=self.testuser.id)
+        db.session.add(msg)
+        db.session.commit()
+
+        with app.test_client() as client:
+            resp = client.post(
+                f"messages/{msg.id}/delete", follow_redirects=True)
+            html = resp.get_data(as_text=True)
+
+            self.assertEqual(resp.status_code, 200)
+            self.assertIn("Access unauthorized.", html)
+
+    def test_prevent_add_message_logged_out(self):
+        """Make sure we can't add a message if logged out."""
+
+        with app.test_client() as client:
+            resp = client.post('/messages/new', follow_redirects=True)
+            html = resp.get_data(as_text=True)
+
+            self.assertEqual(resp.status_code, 200)
+            self.assertIn("Access unauthorized.", html)
